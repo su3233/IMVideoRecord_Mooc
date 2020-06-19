@@ -5,7 +5,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Environment;
@@ -20,6 +22,7 @@ import android.widget.Toast;
 import org.w3c.dom.Text;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -36,6 +39,7 @@ public class StreamActivity extends BaseActivity {
     private TextView tv_result;
     private Button btRecord;
     private volatile boolean isRecording;
+    private volatile boolean isPlaying;
     private ExecutorService service;
     private Handler mainHandler;
     private File audioFile;
@@ -52,6 +56,20 @@ public class StreamActivity extends BaseActivity {
         mainHandler = new Handler(Looper.getMainLooper());
         tv_result = findViewById(R.id.tv_stream_result);
         btRecord = findViewById(R.id.bt_start_op);
+        findViewById(R.id.bt_stream_play).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (audioFile != null && !isPlaying) {
+                    isPlaying = true;
+                    service.submit(new Runnable() {
+                        @Override
+                        public void run() {
+                            doPlay(audioFile);
+                        }
+                    });
+                }
+            }
+        });
         btRecord.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -80,6 +98,85 @@ public class StreamActivity extends BaseActivity {
                 }
             }
         });
+    }
+
+    /**
+     * 播放
+     *
+     * @param audioFile
+     */
+    private void doPlay(File audioFile) {
+        //配置播放器
+        int streamType = AudioManager.STREAM_MUSIC;//音乐类型
+        int sampleRate = 44100;
+        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+        int channelConfig = AudioFormat.CHANNEL_OUT_MONO;//录音和播放都是单声道
+        int mode = AudioTrack.MODE_STREAM;
+
+        int minBufferSize = AudioTrack.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+        //读数据，播放
+        AudioTrack audioTrack = new AudioTrack(streamType, sampleRate, channelConfig,
+                audioFormat, Math.max(minBufferSize, BUFFER_SIZE), mode);
+        audioTrack.play();
+        FileInputStream fis = null;
+        try {
+            fis = new FileInputStream(audioFile);
+            int read;
+            while ((read = fis.read(buffer)) > 0) {
+                int ret = audioTrack.write(buffer, 0, read);
+                //检查write返回值，处理错误
+                switch (ret) {
+                    case AudioTrack.ERROR_INVALID_OPERATION:
+                    case AudioTrack.ERROR_BAD_VALUE:
+                    case AudioTrack.ERROR_DEAD_OBJECT:
+                        playFail();
+                        return;
+                    default:
+                        break;
+                }
+            }
+        } catch (RuntimeException | IOException e) {
+            playFail();
+        } finally {
+            isPlaying = false;
+            if (fis != null) {
+                closeQuietly(fis);
+            }
+            resetQuietly(audioTrack);
+        }
+        //异常处理
+    }
+
+    private void playFail() {
+        audioFile = null;
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(StreamActivity.this, "播放失败", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void resetQuietly(AudioTrack audioTrack) {
+        try {
+            audioTrack.stop();
+            audioTrack.release();
+        } catch (RuntimeException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 静默关闭
+     *
+     * @param fis
+     */
+    private void closeQuietly(FileInputStream fis) {
+        try {
+            fis.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private boolean stopRecord() {

@@ -1,18 +1,16 @@
 package com.mooc.imvideorecord;
 
 import androidx.annotation.RequiresApi;
-import androidx.appcompat.app.AppCompatActivity;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.media.MediaPlayer;
 import android.media.MediaRecorder;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
@@ -34,10 +32,12 @@ public class FileActivity extends BaseActivity {
     private TextView tv_record;
     private ExecutorService service;
     private MediaRecorder mediaRecorder;
-    private File audilFile;
+    private File audioFile;
     private long startTime;
     private long stopTime;
     private Handler mainHandler;
+    private volatile boolean isPlaying;
+    private MediaPlayer mediaPlayer;
 
     @SuppressLint("ClickableViewAccessibility")
     @RequiresApi(api = Build.VERSION_CODES.O)
@@ -47,6 +47,21 @@ public class FileActivity extends BaseActivity {
         mainHandler = new Handler(Looper.getMainLooper());
         tvResult = findViewById(R.id.tv_file_result);
         tv_record = findViewById(R.id.tv_file_record);
+        findViewById(R.id.bt_file_play).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+//检查当前状态
+                if (audioFile != null && !isPlaying) {
+                    isPlaying = true;
+                    service.submit(new Runnable() {
+                        @Override
+                        public void run() {
+                            doPlay(audioFile);
+                        }
+                    });
+                }
+            }
+        });
         tv_record.setOnTouchListener(new View.OnTouchListener() {
 
             @Override
@@ -64,6 +79,62 @@ public class FileActivity extends BaseActivity {
                         break;
                 }
                 return true;
+            }
+        });
+    }
+
+    /**
+     * 播放
+     *
+     * @param audioFile
+     */
+    private void doPlay(File audioFile) {
+        //配置MediaPalyer
+        mediaPlayer = new MediaPlayer();
+        try {
+            mediaPlayer.setDataSource(audioFile.getAbsolutePath());
+            mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                @Override
+                public void onCompletion(MediaPlayer mediaPlayer) {
+                    //播放结束
+                    stopPlay();
+                }
+            });
+            mediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer mediaPlayer, int i, int i1) {
+                    //提示用户
+                    playFail();
+                    //释放播放器
+                    stopPlay();
+                    return true;
+                }
+            });
+            //配置音量，是否循环
+            mediaPlayer.setVolume(1, 1);
+            mediaPlayer.setLooping(false);
+            //准备开始
+            mediaPlayer.prepare();
+            mediaPlayer.start();
+        } catch (RuntimeException | IOException e) {
+            e.printStackTrace();
+            playFail();
+            stopPlay();
+        }
+
+        //设置监听回调
+
+        //异常处理
+    }
+
+    /**
+     * 播放出错
+     */
+    private void playFail() {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                Toast.makeText(FileActivity.this, "播放失败", Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -134,11 +205,11 @@ public class FileActivity extends BaseActivity {
 
         //创建录音文件
         try {
-            audilFile = new File(Environment.getExternalStorageDirectory().getAbsoluteFile() +
+            audioFile = new File(Environment.getExternalStorageDirectory().getAbsoluteFile() +
                     "/audio/", System.currentTimeMillis() + ".m4a");
-            audilFile.getParentFile().mkdirs();
-            audilFile.createNewFile();
-            mediaRecorder.setOutputFile(audilFile.getAbsoluteFile());
+            audioFile.getParentFile().mkdirs();
+            audioFile.createNewFile();
+            mediaRecorder.setOutputFile(audioFile.getAbsoluteFile());
             //开始录音
             mediaRecorder.prepare();
             mediaRecorder.start();
@@ -177,6 +248,24 @@ public class FileActivity extends BaseActivity {
         super.onDestroy();
         service.shutdownNow();
         releaseRecorder();
+        stopPlay();
+    }
+
+    /**
+     * 停止播放
+     */
+    private void stopPlay() {
+        isPlaying = false;
+        if (mediaPlayer != null) {
+            //重置监听器
+            mediaPlayer.setOnCompletionListener(null);
+            mediaPlayer.setOnErrorListener(null);
+
+            mediaPlayer.stop();
+            mediaPlayer.reset();
+            mediaPlayer.release();
+            mediaPlayer = null;
+        }
     }
 
     @Override
